@@ -16,7 +16,24 @@ Validates whether the specified file or directory exists on the system.
 ### Returns
 - **exists**: A boolean indicating if the path exists (true) or not (false).
 
+## Example Usage
 
+```terraform
+# example: existing path
+output "path_exists_existing_dir" {
+  value = (provider::utilities::path_exists("/tmp")).exists
+}
+
+# example: non-Existing path
+output "path_exists_non_existing_path" {
+  value = (provider::utilities::path_exists("/tmp/nonexistent/path")).exists
+}
+
+# example: empty path
+output "path_exists_empty_path" {
+  value = (provider::utilities::path_exists("")).exists
+}
+```
 
 ## Signature
 
