@@ -62,6 +62,6 @@ func (p *utilitiesProvider) DataSources(ctx context.Context) []func() datasource
 func (p *utilitiesProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
 		NewFunctionHttpRequest,
-		NewFunctionPathExist,
+		NewFunctionPathExists,
 	}
 }
