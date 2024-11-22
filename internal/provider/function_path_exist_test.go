@@ -9,14 +9,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
-func Test_path_exists(t *testing.T) {
+func TestPathExists(t *testing.T) {
 	// Create temporary files and directories for testing
 	tempDir := t.TempDir()
+
 	tempFile, err := os.CreateTemp(tempDir, "testfile")
 	if err != nil {
 		t.Fatalf("Failed to create temporary file: %v", err)
 	}
-	defer os.Remove(tempFile.Name()) // Ensure the file is cleaned up
+	defer os.Remove(tempFile.Name()) // Ensure the file is cleaned up after the test
 
 	tempDirNested := filepath.Join(tempDir, "testdir")
 	if err := os.Mkdir(tempDirNested, 0755); err != nil {
@@ -36,7 +37,7 @@ func Test_path_exists(t *testing.T) {
 	// Set up the test cases
 	resource.UnitTest(t, resource.TestCase{
 		TerraformVersionChecks: []tfversion.TerraformVersionCheck{
-			tfversion.SkipBelow(tfversion.Version1_8_0),
+			tfversion.SkipBelow(tfversion.Version1_8_0), // Ensure compatibility with Terraform 1.8.0+
 		},
 		ProtoV6ProviderFactories: TestAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
@@ -44,7 +45,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check an existing file
 				Config: `
 					output "test_existing_file" {
-						value = provider::utilities::path_exists("` + tempFile.Name() + `").exists
+						value = provider::utilities::path_exists("` + tempFile.Name() + `")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -55,7 +56,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check an existing directory
 				Config: `
 					output "test_existing_dir" {
-						value = provider::utilities::path_exists("` + tempDirNested + `").exists
+						value = provider::utilities::path_exists("` + tempDirNested + `")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -66,7 +67,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check a non-existing path
 				Config: `
 					output "test_non_existing_path" {
-						value = provider::utilities::path_exists("/non/existing/path").exists
+						value = provider::utilities::path_exists("/non/existing/path")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -77,7 +78,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check a valid symlink
 				Config: `
 					output "test_valid_symlink" {
-						value = provider::utilities::path_exists("` + tempSymlink + `").exists
+						value = provider::utilities::path_exists("` + tempSymlink + `")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -88,7 +89,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check a broken symlink
 				Config: `
 					output "test_broken_symlink" {
-						value = provider::utilities::path_exists("` + brokenSymlink + `").exists
+						value = provider::utilities::path_exists("` + brokenSymlink + `")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -99,7 +100,7 @@ func Test_path_exists(t *testing.T) {
 				// Test case: Check an empty path
 				Config: `
 					output "test_empty_path" {
-						value = provider::utilities::path_exists("").exists
+						value = provider::utilities::path_exists("")
 					}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
