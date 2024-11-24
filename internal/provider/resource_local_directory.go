@@ -138,7 +138,7 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 		var uid, gid int
 
 		// Handle userName lookup, default to current user if empty
-		if userName == "" {
+		if data.User.IsNull() || userName == "" {
 			currentUser, err := user.Current()
 			if err != nil {
 				resp.Diagnostics.AddError(
@@ -168,7 +168,7 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 		}
 
 		// Handle groupName lookup, default to current user's group if empty
-		if groupName == "" {
+		if data.Group.IsNull() || groupName == "" {
 			currentUser, err := user.Current()
 			if err != nil {
 				resp.Diagnostics.AddError(
@@ -555,7 +555,7 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 	groupName := data.Group.ValueString()
 	var uid, gid int
 
-	if userName == "" {
+	if data.User.IsNull() || userName == "" {
 		currentUser, err := user.Current()
 		if err != nil {
 			resp.Diagnostics.AddError(
@@ -583,7 +583,7 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 		return
 	}
 
-	if groupName == "" {
+	if data.Group.IsNull() || groupName == "" {
 		currentUser, err := user.Current()
 		if err != nil {
 			resp.Diagnostics.AddError(
