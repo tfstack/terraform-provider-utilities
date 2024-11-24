@@ -77,14 +77,6 @@ func (r *resourceUtilitiesLocalDirectory) Metadata(_ context.Context, req resour
 }
 
 func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if runtime.GOOS == "windows" {
-		resp.Diagnostics.AddError(
-			"Incompatible Platform",
-			"This resource cannot be used on Windows systems.",
-		)
-		return
-	}
-
 	var data LocalDirectory
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -134,15 +126,16 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 
 		userName := data.User.ValueString()
 		groupName := data.Group.ValueString()
-		if userName != "" || groupName != "" {
-			var uid, gid int
+		var uid, gid int
 
+		if userName != "" || groupName != "" {
+			// Handle userName lookup
 			if userName != "" {
 				userInfo, err := user.Lookup(userName)
 				if err != nil {
 					resp.Diagnostics.AddError(
 						"Invalid User",
-						fmt.Sprintf("Failed to lookup user: %v", err),
+						fmt.Sprintf("Failed to lookup user '%s': %v", userName, err),
 					)
 					return
 				}
@@ -150,18 +143,19 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 				if err != nil {
 					resp.Diagnostics.AddError(
 						"Invalid User ID",
-						fmt.Sprintf("Failed to convert user ID to integer: %v", err),
+						fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", userInfo.Uid, err),
 					)
 					return
 				}
 			}
 
+			// Handle groupName lookup
 			if groupName != "" {
 				groupInfo, err := user.LookupGroup(groupName)
 				if err != nil {
 					resp.Diagnostics.AddError(
 						"Invalid Group",
-						fmt.Sprintf("Failed to lookup group: %v", err),
+						fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
 					)
 					return
 				}
@@ -169,12 +163,19 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 				if err != nil {
 					resp.Diagnostics.AddError(
 						"Invalid Group ID",
-						fmt.Sprintf("Failed to convert group ID to integer: %v", err),
+						fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", groupInfo.Gid, err),
 					)
 					return
 				}
 			}
 
+			// For Windows, set default values for UID/GID
+			if runtime.GOOS == "windows" {
+				uid = -1 // No valid UID on Windows
+				gid = -1 // No valid GID on Windows
+			}
+
+			// Set ownership
 			if err := os.Chown(directoryPath, uid, gid); err != nil {
 				resp.Diagnostics.AddError(
 					"Error Setting Owner",
@@ -241,17 +242,25 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 		return
 	}
 
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Error Reading Directory Metadata",
-			"Unable to retrieve directory metadata for ownership and permissions.",
-		)
-		return
-	}
+	var uid, gid int
 
-	uid := stat.Uid
-	gid := stat.Gid
+	if runtime.GOOS != "windows" {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			resp.Diagnostics.AddError(
+				"Error Reading Directory Metadata",
+				"Unable to retrieve directory metadata for ownership and permissions.",
+			)
+			return
+		}
+
+		uid = int(stat.Uid)
+		gid = int(stat.Gid)
+	} else {
+		// For Windows, fallback to default values
+		uid = -1 // No valid UID on Windows
+		gid = -1 // No valid GID on Windows
+	}
 
 	userInfo, err := user.LookupId(fmt.Sprintf("%d", uid))
 	if err != nil {
@@ -289,14 +298,6 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 }
 
 func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if runtime.GOOS == "windows" {
-		resp.Diagnostics.AddError(
-			"Incompatible Platform",
-			"This resource cannot be used on Windows systems.",
-		)
-		return
-	}
-
 	var data LocalDirectory
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -358,64 +359,70 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 
 	var uid, gid int
 
-	if userName != "" {
-		userInfo, err := user.Lookup(userName)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid User",
-				fmt.Sprintf("Failed to lookup user '%s': %v", userName, err),
-			)
-			return
+	if runtime.GOOS != "windows" {
+		if userName != "" {
+			userInfo, err := user.Lookup(userName)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Invalid User",
+					fmt.Sprintf("Failed to lookup user '%s': %v", userName, err),
+				)
+				return
+			}
+			uid, err = strconv.Atoi(userInfo.Uid)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Invalid User ID",
+					fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", userInfo.Uid, err),
+				)
+				return
+			}
+		} else {
+			infoSys := info.Sys()
+			stat, ok := infoSys.(*syscall.Stat_t)
+			if !ok {
+				resp.Diagnostics.AddError(
+					"Invalid File Information",
+					"Unable to retrieve system-specific file statistics for current user.",
+				)
+				return
+			}
+			uid = int(stat.Uid)
 		}
-		uid, err = strconv.Atoi(userInfo.Uid)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid User ID",
-				fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", userInfo.Uid, err),
-			)
-			return
-		}
-	} else {
-		infoSys := info.Sys()
-		stat, ok := infoSys.(*syscall.Stat_t)
-		if !ok {
-			resp.Diagnostics.AddError(
-				"Invalid File Information",
-				"Unable to retrieve system-specific file statistics for current user.",
-			)
-			return
-		}
-		uid = int(stat.Uid)
-	}
 
-	if groupName != "" {
-		groupInfo, err := user.LookupGroup(groupName)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Group",
-				fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
-			)
-			return
-		}
-		gid, err = strconv.Atoi(groupInfo.Gid)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Group ID",
-				fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", groupInfo.Gid, err),
-			)
-			return
+		if groupName != "" {
+			groupInfo, err := user.LookupGroup(groupName)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Invalid Group",
+					fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
+				)
+				return
+			}
+			gid, err = strconv.Atoi(groupInfo.Gid)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Invalid Group ID",
+					fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", groupInfo.Gid, err),
+				)
+				return
+			}
+		} else {
+			infoSys := info.Sys()
+			stat, ok := infoSys.(*syscall.Stat_t)
+			if !ok {
+				resp.Diagnostics.AddError(
+					"Invalid File Information",
+					"Unable to retrieve system-specific file statistics for current group.",
+				)
+				return
+			}
+			gid = int(stat.Gid)
 		}
 	} else {
-		infoSys := info.Sys()
-		stat, ok := infoSys.(*syscall.Stat_t)
-		if !ok {
-			resp.Diagnostics.AddError(
-				"Invalid File Information",
-				"Unable to retrieve system-specific file statistics for current group.",
-			)
-			return
-		}
-		gid = int(stat.Gid)
+		// For Windows, fallback to default values
+		uid = -1 // No valid UID on Windows
+		gid = -1 // No valid GID on Windows
 	}
 
 	if err := os.Chown(directoryPath, uid, gid); err != nil {
@@ -440,14 +447,6 @@ func isProtectedPath(path string) bool {
 }
 
 func (r *resourceUtilitiesLocalDirectory) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if runtime.GOOS == "windows" {
-		resp.Diagnostics.AddError(
-			"Incompatible Platform",
-			"This resource cannot be used on Windows systems.",
-		)
-		return
-	}
-
 	var data LocalDirectory
 
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)

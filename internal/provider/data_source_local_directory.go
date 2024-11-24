@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"runtime"
 	"strconv"
 	"syscall"
 
@@ -50,20 +51,28 @@ func (d *dataSourceLocalDirectory) Read(ctx context.Context, req datasource.Read
 
 		permissions = fmt.Sprintf("%04o", info.Mode().Perm())
 
-		if sysInfo, ok := info.Sys().(*syscall.Stat_t); ok {
-			userObj, userErr := user.LookupId(strconv.Itoa(int(sysInfo.Uid)))
-			if userErr == nil {
-				userName = userObj.Username
-			} else {
-				userName = strconv.Itoa(int(sysInfo.Uid))
-			}
+		// Platform-specific logic
+		if runtime.GOOS != "windows" {
+			// On non-Windows platforms, we can use syscall.Stat_t
+			if sysInfo, ok := info.Sys().(*syscall.Stat_t); ok {
+				userObj, userErr := user.LookupId(strconv.Itoa(int(sysInfo.Uid)))
+				if userErr == nil {
+					userName = userObj.Username
+				} else {
+					userName = strconv.Itoa(int(sysInfo.Uid))
+				}
 
-			groupObj, groupErr := user.LookupGroupId(strconv.Itoa(int(sysInfo.Gid)))
-			if groupErr == nil {
-				groupName = groupObj.Name
-			} else {
-				groupName = strconv.Itoa(int(sysInfo.Gid))
+				groupObj, groupErr := user.LookupGroupId(strconv.Itoa(int(sysInfo.Gid)))
+				if groupErr == nil {
+					groupName = groupObj.Name
+				} else {
+					groupName = strconv.Itoa(int(sysInfo.Gid))
+				}
 			}
+		} else {
+			// On Windows, return placeholder values for user and group
+			userName = "N/A"  // No user data available for Windows
+			groupName = "N/A" // No group data available for Windows
 		}
 	}
 
