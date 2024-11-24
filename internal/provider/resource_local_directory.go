@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -204,14 +203,6 @@ func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resour
 }
 
 func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if runtime.GOOS == "windows" {
-		resp.Diagnostics.AddError(
-			"Incompatible Platform",
-			"This resource cannot be used on Windows systems.",
-		)
-		return
-	}
-
 	var data LocalDirectory
 
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -245,19 +236,44 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 	var uid, gid int
 
 	if runtime.GOOS != "windows" {
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
+		// Use os/user package to infer ownership
+		currentUser, err := user.Current()
+		if err != nil {
 			resp.Diagnostics.AddError(
-				"Error Reading Directory Metadata",
-				"Unable to retrieve directory metadata for ownership and permissions.",
+				"Error Fetching Current User",
+				fmt.Sprintf("Unable to determine current user: %v", err),
 			)
 			return
 		}
 
-		uid = int(stat.Uid)
-		gid = int(stat.Gid)
+		uid, err = strconv.Atoi(currentUser.Uid)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Parsing User ID",
+				fmt.Sprintf("Failed to convert user ID to integer: %v", err),
+			)
+			return
+		}
+
+		group, err := user.LookupGroupId(currentUser.Gid)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Fetching Current Group",
+				fmt.Sprintf("Unable to determine current group: %v", err),
+			)
+			return
+		}
+
+		gid, err = strconv.Atoi(group.Gid)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Parsing Group ID",
+				fmt.Sprintf("Failed to convert group ID to integer: %v", err),
+			)
+			return
+		}
 	} else {
-		// For Windows, fallback to default values
+		// Default values for Windows
 		uid = -1 // No valid UID on Windows
 		gid = -1 // No valid GID on Windows
 	}
@@ -378,16 +394,22 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 				return
 			}
 		} else {
-			infoSys := info.Sys()
-			stat, ok := infoSys.(*syscall.Stat_t)
-			if !ok {
+			currentUser, err := user.Current()
+			if err != nil {
 				resp.Diagnostics.AddError(
-					"Invalid File Information",
-					"Unable to retrieve system-specific file statistics for current user.",
+					"Error Fetching Current User",
+					fmt.Sprintf("Unable to determine current user: %v", err),
 				)
 				return
 			}
-			uid = int(stat.Uid)
+			uid, err = strconv.Atoi(currentUser.Uid)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error Parsing User ID",
+					fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", currentUser.Uid, err),
+				)
+				return
+			}
 		}
 
 		if groupName != "" {
@@ -408,16 +430,22 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 				return
 			}
 		} else {
-			infoSys := info.Sys()
-			stat, ok := infoSys.(*syscall.Stat_t)
-			if !ok {
+			currentUser, err := user.Current()
+			if err != nil {
 				resp.Diagnostics.AddError(
-					"Invalid File Information",
-					"Unable to retrieve system-specific file statistics for current group.",
+					"Error Fetching Current User",
+					fmt.Sprintf("Unable to determine current user: %v", err),
 				)
 				return
 			}
-			gid = int(stat.Gid)
+			gid, err = strconv.Atoi(currentUser.Gid)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error Parsing Group ID",
+					fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", currentUser.Gid, err),
+				)
+				return
+			}
 		}
 	} else {
 		// For Windows, fallback to default values

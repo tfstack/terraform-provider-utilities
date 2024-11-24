@@ -6,8 +6,6 @@ import (
 	"os"
 	"os/user"
 	"runtime"
-	"strconv"
-	"syscall"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -53,27 +51,31 @@ func (d *dataSourceLocalDirectory) Read(ctx context.Context, req datasource.Read
 
 		// Platform-specific logic
 		if runtime.GOOS != "windows" {
-			// On non-Windows platforms, we can use syscall.Stat_t
-			if sysInfo, ok := info.Sys().(*syscall.Stat_t); ok {
-				userObj, userErr := user.LookupId(strconv.Itoa(int(sysInfo.Uid)))
-				if userErr == nil {
-					userName = userObj.Username
-				} else {
-					userName = strconv.Itoa(int(sysInfo.Uid))
-				}
+			// On non-Windows platforms, retrieve user and group information
+			currentUser, err := user.Current()
+			if err == nil {
+				userName = currentUser.Username
+			} else {
+				resp.Diagnostics.AddError(
+					"Error Retrieving User",
+					fmt.Sprintf("Failed to fetch current user: %v", err),
+				)
+				return
+			}
 
-				groupObj, groupErr := user.LookupGroupId(strconv.Itoa(int(sysInfo.Gid)))
-				if groupErr == nil {
-					groupName = groupObj.Name
-				} else {
-					groupName = strconv.Itoa(int(sysInfo.Gid))
-				}
+			groupId := currentUser.Gid
+			groupObj, groupErr := user.LookupGroupId(groupId)
+			if groupErr == nil {
+				groupName = groupObj.Name
+			} else {
+				groupName = groupId // Fallback to GID as a string
 			}
 		} else {
 			// On Windows, return placeholder values for user and group
 			userName = "N/A"  // No user data available for Windows
 			groupName = "N/A" // No group data available for Windows
 		}
+
 	}
 
 	state := struct {

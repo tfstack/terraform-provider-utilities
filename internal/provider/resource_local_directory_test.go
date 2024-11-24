@@ -3,10 +3,7 @@ package provider
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
-	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,10 +13,6 @@ import (
 )
 
 func TestResourceUtilitiesLocalDirectory(t *testing.T) {
-	if isWindows() {
-		t.Skip("Windows is not supported, skipping test.")
-	}
-
 	dirPath1 := fmt.Sprintf("/tmp/test-dir-%s", uuid.NewString())
 	dirPath2 := fmt.Sprintf("/tmp/test-dir-%s", uuid.NewString())
 
@@ -70,20 +63,16 @@ func TestResourceUtilitiesLocalDirectory(t *testing.T) {
 						return fmt.Errorf("failed to stat directory: %v", err)
 					}
 
-					sysInfo, ok := info.Sys().(*syscall.Stat_t)
-					if !ok {
-						return fmt.Errorf("failed to retrieve system info for directory")
-					}
-
-					userObj, err := user.LookupId(fmt.Sprintf("%d", sysInfo.Uid))
-					userName := fmt.Sprintf("%d", sysInfo.Uid)
-					if err == nil {
-						userName = userObj.Username
-					}
-
-					groupName, err := getGroupNameByGID(int(sysInfo.Gid))
+					currentUser, err := user.Current()
 					if err != nil {
-						groupName = fmt.Sprintf("%d", sysInfo.Gid)
+						return fmt.Errorf("failed to retrieve current user: %v", err)
+					}
+					userName := currentUser.Username
+
+					groupObj, groupErr := user.LookupGroupId(currentUser.Gid)
+					groupName := currentUser.Gid // Fallback to GID as a string
+					if groupErr == nil {
+						groupName = groupObj.Name
 					}
 
 					if userName != "root" || groupName != "root" {
@@ -129,19 +118,4 @@ func TestResourceUtilitiesLocalDirectory(t *testing.T) {
 			},
 		},
 	})
-}
-
-func isWindows() bool {
-	return os.PathSeparator == '\\'
-}
-
-func getGroupNameByGID(gid int) (string, error) {
-	cmd := exec.Command("getent", "group", fmt.Sprintf("%d", gid))
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get group name for GID %d: %v", gid, err)
-	}
-
-	group := strings.Split(string(output), ":")[0]
-	return group, nil
 }
