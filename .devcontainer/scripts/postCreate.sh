@@ -12,3 +12,11 @@ apt-add-repository -y "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb
 apt-get update -y
 apt-get install -y terraform
 rm hashicorp.gpg
+
+# install golangci-lint
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.62.0
+
+# install tfplugindocs
+export GOBIN=$PWD/bin
+export PATH=$GOBIN:$PATH
+go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs
