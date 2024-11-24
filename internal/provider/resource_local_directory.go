@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"runtime"
 	"strconv"
@@ -66,6 +67,36 @@ var protectedPaths = []string{
 
 func NewResourceUtilitiesLocalDirectory() resource.Resource {
 	return &resourceUtilitiesLocalDirectory{}
+}
+
+func getUserID(userName string) (int, error) {
+	cmd := exec.Command("id", "-u", userName)
+	output, err := cmd.Output()
+	if err != nil {
+		return -1, fmt.Errorf("failed to execute id command for user '%s': %v", userName, err)
+	}
+
+	uid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return -1, fmt.Errorf("failed to convert UID to integer: %v", err)
+	}
+
+	return uid, nil
+}
+
+func getGroupID(groupName string) (int, error) {
+	cmd := exec.Command("id", "-g", groupName)
+	output, err := cmd.Output()
+	if err != nil {
+		return -1, fmt.Errorf("failed to execute id command for group '%s': %v", groupName, err)
+	}
+
+	gid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return -1, fmt.Errorf("failed to convert GID to integer: %v", err)
+	}
+
+	return gid, nil
 }
 
 func isProtectedPath(path string) bool {
@@ -347,39 +378,42 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 	var uid, gid int
 
 	if runtime.GOOS != "windows" {
-		// Use os/user package to infer ownership
-		currentUser, err := user.Current()
+		cmd := exec.Command("ls", "-ld", directoryPath)
+		output, err := cmd.Output()
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Error Fetching Current User",
-				fmt.Sprintf("Unable to determine current user: %v", err),
+				"Error Retrieving Directory Metadata",
+				fmt.Sprintf("Failed to retrieve metadata for '%s': %v", directoryPath, err),
 			)
 			return
 		}
 
-		uid, err = strconv.Atoi(currentUser.Uid)
-		if err != nil {
+		fields := strings.Fields(string(output))
+		if len(fields) < 4 {
 			resp.Diagnostics.AddError(
-				"Error Parsing User ID",
-				fmt.Sprintf("Failed to convert user ID to integer: %v", err),
+				"Error Parsing Directory Metadata",
+				fmt.Sprintf("Unexpected output format from `ls -ld`: %s", output),
 			)
 			return
 		}
 
-		group, err := user.LookupGroupId(currentUser.Gid)
+		userName := fields[2]
+		groupName := fields[3]
+
+		uid, err = getUserID(userName)
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Error Fetching Current Group",
-				fmt.Sprintf("Unable to determine current group: %v", err),
+				"Error Retrieving User Info",
+				fmt.Sprintf("Failed to get UID for user '%s': %v", userName, err),
 			)
 			return
 		}
 
-		gid, err = strconv.Atoi(group.Gid)
+		gid, err = getGroupID(groupName)
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Error Parsing Group ID",
-				fmt.Sprintf("Failed to convert group ID to integer: %v", err),
+				"Error Retrieving Group Info",
+				fmt.Sprintf("Failed to get GID for group '%s': %v", groupName, err),
 			)
 			return
 		}
