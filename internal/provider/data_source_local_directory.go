@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/user"
+	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -49,33 +50,33 @@ func (d *dataSourceLocalDirectory) Read(ctx context.Context, req datasource.Read
 
 		permissions = fmt.Sprintf("%04o", info.Mode().Perm())
 
-		// Platform-specific logic
 		if runtime.GOOS != "windows" {
-			// On non-Windows platforms, retrieve user and group information
-			currentUser, err := user.Current()
-			if err == nil {
-				userName = currentUser.Username
-			} else {
+			cmd := exec.Command("ls", "-ld", directoryPath)
+			output, err := cmd.Output()
+			if err != nil {
 				resp.Diagnostics.AddError(
-					"Error Retrieving User",
-					fmt.Sprintf("Failed to fetch current user: %v", err),
+					"Error Fetching Directory Metadata",
+					fmt.Sprintf("Failed to retrieve metadata for '%s': %v", directoryPath, err),
 				)
 				return
 			}
 
-			groupId := currentUser.Gid
-			groupObj, groupErr := user.LookupGroupId(groupId)
-			if groupErr == nil {
-				groupName = groupObj.Name
+			fields := strings.Fields(string(output))
+			if len(fields) >= 3 {
+				userName = fields[2]
+				groupName = fields[3]
 			} else {
-				groupName = groupId // Fallback to GID as a string
+				resp.Diagnostics.AddError(
+					"Error Parsing Metadata",
+					"Unexpected output format from `ls -ld` command.",
+				)
+				return
 			}
 		} else {
-			// On Windows, return placeholder values for user and group
-			userName = "N/A"  // No user data available for Windows
-			groupName = "N/A" // No group data available for Windows
+			// For Windows, set placeholder values
+			userName = "N/A"
+			groupName = "N/A"
 		}
-
 	}
 
 	state := struct {
