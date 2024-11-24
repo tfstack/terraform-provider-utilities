@@ -3,12 +3,12 @@
 page_title: "utilities Provider"
 subcategory: ""
 description: |-
-  The Utilities provider offers various utility functions and tools for use in Terraform configurations. This provider does not require authentication or credentials.
+  The Utilities provider offers various utility functions and tools for use in Terraform configurations. This provider does not require configuration.
 ---
 
 # utilities Provider
 
-The Utilities provider offers various utility functions and tools for use in Terraform configurations. This provider does not require authentication or credentials.
+The Utilities provider offers various utility functions and tools for use in Terraform configurations. This provider does not require configuration.
 
 ## Example Usage
 
