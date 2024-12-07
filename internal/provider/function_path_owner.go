@@ -2,10 +2,10 @@ package provider
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/user"
-	"syscall"
+	"os/exec"
+	"runtime"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -51,6 +51,7 @@ func (f *PathOwnerFunction) Run(ctx context.Context, req function.RunRequest, re
 		Path string `tfsdk:"path"`
 	}
 
+	// Get the path from the arguments
 	resp.Error = function.ConcatFuncErrors(req.Arguments.Get(ctx, &inputs.Path))
 	if resp.Error != nil {
 		return
@@ -68,39 +69,49 @@ func (f *PathOwnerFunction) Run(ctx context.Context, req function.RunRequest, re
 	}
 
 	// Get file information
-	fileInfo, err := os.Stat(inputs.Path)
+	_, err := os.Stat(inputs.Path)
 	if err != nil {
 		resp.Error = function.NewArgumentFuncError(1, "Error retrieving path information")
 		tflog.Error(ctx, "Error retrieving path information", map[string]interface{}{"path": inputs.Path, "error": err.Error()})
 		return
 	}
 
-	// Retrieve the system-specific file info
-	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		resp.Error = function.NewArgumentFuncError(1, "Failed to retrieve file system information")
-		tflog.Error(ctx, "Failed to retrieve file system information", map[string]interface{}{"path": inputs.Path})
-		return
-	}
+	var owner string
 
-	// Convert UID to a string
-	uid := fmt.Sprintf("%d", stat.Uid)
+	// On Unix-based systems, use system calls to get UID and GID without Sys()
+	if runtime.GOOS != "windows" {
+		// Retrieve the user and group via command-line tools (like `stat` or `ls -l`)
+		// Using "stat" command (POSIX) to get user and group information
+		cmd := exec.Command("stat", "-c", "%U:%G", inputs.Path)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			resp.Error = function.NewArgumentFuncError(1, "Error retrieving file owner information")
+			tflog.Error(ctx, "Error retrieving file owner information", map[string]interface{}{"path": inputs.Path, "error": err.Error()})
+			return
+		}
 
-	// Lookup user by UID
-	usr, err := user.LookupId(uid)
-	if err != nil {
-		resp.Error = function.NewArgumentFuncError(1, "Error retrieving file owner information")
-		tflog.Error(ctx, "Error retrieving file owner information", map[string]interface{}{"path": inputs.Path, "uid": uid, "error": err.Error()})
-		return
+		// Parse the output of the stat command
+		parts := strings.Split(string(output), ":")
+		if len(parts) != 2 {
+			resp.Error = function.NewArgumentFuncError(1, "Invalid stat output")
+			tflog.Error(ctx, "Invalid stat output", map[string]interface{}{"path": inputs.Path, "output": string(output)})
+			return
+		}
+
+		// Assign the parsed user and group
+		owner = parts[0]
+	} else {
+		// For Windows systems, set the owner to "unknown"
+		owner = "unknown"
 	}
 
 	tflog.Debug(ctx, "File owner retrieved", map[string]interface{}{
 		"path":  inputs.Path,
-		"owner": usr.Username,
+		"owner": owner,
 	})
 
 	// Set the result (owner name)
-	if err := resp.Result.Set(ctx, types.StringValue(usr.Username)); err != nil {
+	if err := resp.Result.Set(ctx, types.StringValue(owner)); err != nil {
 		resp.Error = function.NewArgumentFuncError(1, "Failed to set result")
 		tflog.Error(ctx, "Failed to set result", map[string]interface{}{"error": err.Error()})
 	}

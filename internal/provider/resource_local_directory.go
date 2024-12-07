@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -388,13 +387,14 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 			tflog.Warn(ctx, "Directory does not exist; proceeding without error.", map[string]interface{}{
 				"path": directoryPath,
 			})
+			// Set all fields to null if the directory doesn't exist
 			data.User = types.StringNull()
 			data.Group = types.StringNull()
 			data.Permissions = types.StringNull()
 			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 			return
 		} else {
-			// Unexpected error
+			// Unexpected error while retrieving directory info
 			resp.Diagnostics.AddError(
 				"Error Retrieving Directory Info",
 				fmt.Sprintf("Failed to check the path '%s': %v", directoryPath, err),
@@ -404,7 +404,7 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 	}
 
 	// If the path exists, check if it’s a directory
-	if info != nil && !info.IsDir() {
+	if !info.IsDir() {
 		resp.Diagnostics.AddError(
 			"Invalid Directory Path",
 			fmt.Sprintf("The path '%s' exists but is not a directory.", directoryPath),
@@ -412,58 +412,17 @@ func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource
 		return
 	}
 
-	var userName, groupName string
+	// Set default values for user and group to "unknown" for platform agnosticism
+	userName := "unknown"
+	groupName := "unknown"
 
-	if runtime.GOOS != "windows" {
-		// Retrieve system-specific metadata
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			resp.Diagnostics.AddError(
-				"Error Retrieving File Metadata",
-				"Failed to retrieve system metadata for the directory.",
-			)
-			return
-		}
-
-		// Get UID and GID
-		uid := stat.Uid
-		gid := stat.Gid
-
-		// Lookup user name
-		userInfo, err := user.LookupId(fmt.Sprint(uid))
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error Retrieving User Info",
-				fmt.Sprintf("Failed to retrieve user information for UID %d: %v", uid, err),
-			)
-			return
-		}
-		userName = userInfo.Username
-
-		// Lookup group name
-		groupInfo, err := user.LookupGroupId(fmt.Sprint(gid))
-		if err != nil {
-			resp.Diagnostics.AddWarning(
-				"Error Retrieving Group Info",
-				fmt.Sprintf("Failed to retrieve group information for GID %d: %v", gid, err),
-			)
-			groupName = "" // Reset group name if unresolved
-		} else {
-			groupName = groupInfo.Name
-		}
-	} else {
-		// Defaults for Windows
-		userName = "unknown"
-		groupName = "unknown"
-	}
-
-	// Retrieve and set directory permissions
+	// Retrieve and set directory permissions in octal format
 	mode := info.Mode().Perm()
 	data.Permissions = types.StringValue(fmt.Sprintf("%04o", mode))
 	data.User = types.StringValue(userName)
 	data.Group = types.StringValue(groupName)
 
-	// Log read operation
+	// Log the read operation
 	tflog.Info(ctx, "Read local directory", map[string]interface{}{
 		"path":        directoryPath,
 		"user":        userName,
