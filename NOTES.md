@@ -57,3 +57,16 @@ go test -v ./internal/provider
 ### Running with Debug Logging:
 
 TF_LOG=DEBUG go test -v ./internal/provider
+
+### Generate documentation
+
+tfplugindocs validate
+
+known error, you can manually remediate but comes back when `tfplugindocs generate` gets executed
+
+```bash
+Error executing command: validation errors found: 
+docs/index.md: error checking file frontmatter: YAML frontmatter should not contain subcategory
+```
+
+tfplugindocs generate
