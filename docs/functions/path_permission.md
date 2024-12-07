@@ -16,7 +16,13 @@ Returns the permissions (read, write, execute) of the specified file or director
 ### Returns
 - **string**: The file or directory permissions in octal format (e.g., "0755").
 
+## Example Usage
 
+```terraform
+output "path_permission" {
+  value = provider::utilities::path_permission("/tmp/test")
+}
+```
 
 ## Signature
 
