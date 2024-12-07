@@ -61,8 +61,4 @@ func (f *PathExistsFunction) Run(ctx context.Context, req function.RunRequest, r
 	exists := err == nil || !os.IsNotExist(err)
 
 	resp.Error = resp.Result.Set(ctx, types.BoolValue(exists))
-
-	if resp.Error != nil {
-		return
-	}
 }

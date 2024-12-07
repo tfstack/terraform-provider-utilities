@@ -9,7 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
-func TestPathExists(t *testing.T) {
+func TestFunctionPathExists(t *testing.T) {
+
 	// Create temporary files and directories for testing
 	tempDir := t.TempDir()
 
