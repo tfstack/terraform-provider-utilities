@@ -6,17 +6,16 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -29,12 +28,11 @@ type resourceUtilitiesLocalDirectory struct{}
 
 type LocalDirectory struct {
 	Force       types.Bool   `tfsdk:"force"`
-	Group       types.String `tfsdk:"user"`
-	ID          types.String `tfsdk:"id"`
+	Group       types.String `tfsdk:"group"`
 	Managed     types.Bool   `tfsdk:"managed"`
 	Path        types.String `tfsdk:"path"`
 	Permissions types.String `tfsdk:"permissions"`
-	User        types.String `tfsdk:"group"`
+	User        types.String `tfsdk:"user"`
 }
 
 var protectedPaths = []string{
@@ -69,44 +67,58 @@ func NewResourceUtilitiesLocalDirectory() resource.Resource {
 	return &resourceUtilitiesLocalDirectory{}
 }
 
-func getUserID(userName string) (int, error) {
-	cmd := exec.Command("id", "-u", userName)
-	output, err := cmd.Output()
-	if err != nil {
-		return -1, fmt.Errorf("failed to execute id command for user '%s': %v", userName, err)
-	}
+// func getUserID(userName string) (int, error) {
+// 	cmd := exec.Command("id", "-u", userName)
+// 	output, err := cmd.Output()
+// 	if err != nil {
+// 		return -1, fmt.Errorf("failed to execute id command for user '%s': %v", userName, err)
+// 	}
 
-	uid, err := strconv.Atoi(strings.TrimSpace(string(output)))
-	if err != nil {
-		return -1, fmt.Errorf("failed to convert UID to integer: %v", err)
-	}
+// 	uid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+// 	if err != nil {
+// 		return -1, fmt.Errorf("failed to convert UID to integer: %v", err)
+// 	}
 
-	return uid, nil
-}
+// 	return uid, nil
+// }
 
-func getGroupID(groupName string) (int, error) {
-	cmd := exec.Command("id", "-g", groupName)
-	output, err := cmd.Output()
-	if err != nil {
-		return -1, fmt.Errorf("failed to execute id command for group '%s': %v", groupName, err)
-	}
+// func getGroupID(groupName string) (int, error) {
+// 	cmd := exec.Command("id", "-g", groupName)
+// 	output, err := cmd.Output()
+// 	if err != nil {
+// 		return -1, fmt.Errorf("failed to execute id command for group '%s': %v", groupName, err)
+// 	}
 
-	gid, err := strconv.Atoi(strings.TrimSpace(string(output)))
-	if err != nil {
-		return -1, fmt.Errorf("failed to convert GID to integer: %v", err)
-	}
+// 	gid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+// 	if err != nil {
+// 		return -1, fmt.Errorf("failed to convert GID to integer: %v", err)
+// 	}
 
-	return gid, nil
-}
+// 	return gid, nil
+// }
 
 func isProtectedPath(path string) bool {
+	normalizedPath := strings.TrimRight(path, "/")
+
 	for _, protected := range protectedPaths {
-		if path == protected || strings.HasPrefix(path+"/", protected+"/") {
+		normalizedProtected := strings.TrimRight(protected, "/")
+		if normalizedPath == normalizedProtected {
 			return true
 		}
 	}
 
 	return false
+}
+
+func getCurrentGroupName() (string, error) {
+	cmd := exec.Command("id", "-gn")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to execute 'id -gn' command: %v", err)
+	}
+
+	groupName := strings.TrimSpace(string(output))
+	return groupName, nil
 }
 
 func (r *resourceUtilitiesLocalDirectory) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -119,156 +131,185 @@ func (r *resourceUtilitiesLocalDirectory) Metadata(_ context.Context, req resour
 func (r *resourceUtilitiesLocalDirectory) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data LocalDirectory
 
+	// Retrieve plan data
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	// Check if it's a valid directory
 	directoryPath := data.Path.ValueString()
 	info, err := os.Stat(directoryPath)
-
-	if err == nil && info.IsDir() {
-		data.ID = types.StringValue(directoryPath)
-		data.Managed = types.BoolValue(false)
-
-		tflog.Info(ctx, "Directory already exists", map[string]interface{}{
-			"path":    directoryPath,
-			"managed": false,
-		})
-	} else if os.IsNotExist(err) {
-		if err := os.MkdirAll(directoryPath, os.ModePerm); err != nil {
+	if err == nil {
+		// Path exists, check if it's a directory
+		if info != nil && !info.IsDir() {
 			resp.Diagnostics.AddError(
-				"Error Creating Directory",
+				"Invalid Directory Path",
+				fmt.Sprintf("The path '%s' exists but is not a directory.", directoryPath),
+			)
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		// Unexpected error while checking the path
+		resp.Diagnostics.AddError(
+			"Error Retrieving Path Info",
+			fmt.Sprintf("Failed to check the path '%s': %v", directoryPath, err),
+		)
+		return
+	}
+
+	// Compute default user if not set
+	userName := data.User.ValueString()
+	if userName == "" {
+		currentUserInfo, err := user.Current()
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Retrieving Current User",
+				fmt.Sprintf("Failed to retrieve the current user: %v", err),
+			)
+			return
+		}
+		userName = currentUserInfo.Username
+		data.User = types.StringValue(userName)
+	}
+
+	// Compute default group if not set
+	groupName := data.Group.ValueString()
+	if groupName == "" {
+		var err error
+
+		groupName, err = getCurrentGroupName()
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Retrieving Current Group Name",
 				err.Error(),
 			)
 			return
 		}
 
-		if data.Permissions.ValueString() != "" {
-			var perm int
-			_, err := fmt.Sscanf(data.Permissions.ValueString(), "%o", &perm)
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Invalid Permissions",
-					fmt.Sprintf("Failed to parse permissions: %v", err),
-				)
-				return
-			}
+		data.Group = types.StringValue(groupName)
+	}
 
-			if err := os.Chmod(directoryPath, os.FileMode(perm)); err != nil {
-				resp.Diagnostics.AddError(
-					"Error Setting Permissions",
-					fmt.Sprintf("Failed to set directory permissions: %v", err),
-				)
-				return
-			}
-		}
+	// Convert user name to UID
+	userInfo, err := user.Lookup(userName)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid User",
+			fmt.Sprintf("Failed to lookup user '%s': %v", userName, err),
+		)
+		return
+	}
 
-		userName := data.User.ValueString()
-		groupName := data.Group.ValueString()
-		var uid, gid int
+	// Convert UID to integer
+	uid, err := strconv.Atoi(userInfo.Uid)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid User ID",
+			fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", userInfo.Uid, err),
+		)
+		return
+	}
 
-		// Handle userName lookup, default to current user if empty
-		if data.User.IsNull() || userName == "" {
-			currentUser, err := user.Current()
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Error Retrieving Current User",
-					fmt.Sprintf("Failed to retrieve the current user: %v", err),
-				)
-				return
-			}
-			userName = currentUser.Username
-		}
+	// Convert group name to GID
+	groupInfo, err := user.LookupGroup(groupName)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Looking Up Group",
+			fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
+		)
+		return
+	}
 
-		userInfo, err := user.Lookup(userName)
-		if err != nil {
+	// Convert GID to integer
+	gid, err := strconv.Atoi(groupInfo.Gid)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Group ID",
+			fmt.Sprintf("Failed to convert GID '%s' to integer: %v", groupInfo.Gid, err),
+		)
+		return
+	}
+
+	// For Windows, fallback to default values
+	if runtime.GOOS == "windows" {
+		uid = -1 // No valid UID on Windows
+		gid = -1 // No valid GID on Windows
+	}
+
+	// Check if the directory exists otherwise create
+	if _, err := os.Stat(directoryPath); os.IsNotExist(err) {
+		// Create the directory since it doesn't exist
+		if err := os.MkdirAll(directoryPath, os.ModePerm); err != nil {
 			resp.Diagnostics.AddError(
-				"Invalid User",
-				fmt.Sprintf("Failed to lookup user '%s': %v", userName, err),
+				"Error Creating Directory",
+				fmt.Sprintf("Failed to create directory '%s': %v", directoryPath, err),
 			)
 			return
 		}
-		uid, err = strconv.Atoi(userInfo.Uid)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid User ID",
-				fmt.Sprintf("Failed to convert user ID '%s' to integer: %v", userInfo.Uid, err),
-			)
-			return
-		}
-
-		// Handle groupName lookup, default to current user's group if empty
-		if data.Group.IsNull() || groupName == "" {
-			currentUser, err := user.Current()
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Error Retrieving Current User",
-					fmt.Sprintf("Failed to retrieve the current user: %v", err),
-				)
-				return
-			}
-			groupInfo, err := user.LookupGroupId(currentUser.Gid)
-			if err == nil {
-				groupName = groupInfo.Name
-			} else {
-				groupName = currentUser.Gid // Fallback to GID as string
-			}
-		}
-
-		groupInfo, err := user.LookupGroup(groupName)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Group",
-				fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
-			)
-			return
-		}
-		gid, err = strconv.Atoi(groupInfo.Gid)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Group ID",
-				fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", groupInfo.Gid, err),
-			)
-			return
-		}
-
-		// For Windows, set default values for UID/GID
-		if runtime.GOOS == "windows" {
-			uid = -1 // No valid UID on Windows
-			gid = -1 // No valid GID on Windows
-		}
-
-		// Set ownership
-		if err := os.Chown(directoryPath, uid, gid); err != nil {
-			resp.Diagnostics.AddError(
-				"Error Setting Owner",
-				fmt.Sprintf("Failed to set directory owner: %v", err),
-			)
-			return
-		}
-
-		data.ID = types.StringValue(directoryPath)
 		data.Managed = types.BoolValue(true)
-
-		tflog.Info(ctx, "Created local directory", map[string]interface{}{
-			"path":    directoryPath,
-			"managed": true,
-		})
 	} else if err != nil {
+		// Handle unexpected errors
 		resp.Diagnostics.AddError(
 			"Error Checking Directory",
+			fmt.Sprintf("Failed to check directory '%s': %v", directoryPath, err),
+		)
+		return
+	}
+
+	// Handle file permission and ownership
+	if isProtectedPath(directoryPath) {
+		tflog.Warn(ctx, "Skipping ownership modification for protected OS path", map[string]interface{}{
+			"path":   directoryPath,
+			"reason": "The specified path is considered critical to the operating system and should not have its ownership modified to avoid potential system instability or security risks.",
+		})
+	} else {
+		// Apply ownership to the directory
+		if err := os.Chown(directoryPath, uid, gid); err != nil {
+			resp.Diagnostics.AddError(
+				"Error Setting Ownership",
+				fmt.Sprintf("Failed to set ownership for path '%s': %s", directoryPath, err.Error()),
+			)
+			return
+		}
+
+		// Apply permissions if provided
+		if perms := data.Permissions.ValueString(); perms != "" {
+			mode, err := strconv.ParseUint(perms, 8, 32)
+			if err != nil {
+				resp.Diagnostics.AddError("Invalid Permissions", fmt.Sprintf("Failed to convert permissions '%s': %v", perms, err))
+				return
+			}
+			if err := os.Chmod(directoryPath, os.FileMode(mode)); err != nil {
+				resp.Diagnostics.AddError("Error Setting Permissions", err.Error())
+				return
+			}
+		}
+	}
+
+	// Retrieve the current directory info
+	info, err = os.Stat(directoryPath)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Retrieving Directory Info",
 			err.Error(),
 		)
 		return
 	}
 
+	// Get the current permissions (mode) of the directory
+	currentPermissions := info.Mode().Perm()
+
+	// Set data.Permissions to the current permissions
+	data.Permissions = types.StringValue(fmt.Sprintf("0%o", currentPermissions))
+
+	// Set the state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *resourceUtilitiesLocalDirectory) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data LocalDirectory
 
+	// Retrieve state data
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -276,189 +317,167 @@ func (r *resourceUtilitiesLocalDirectory) Delete(ctx context.Context, req resour
 
 	directoryPath := data.Path.ValueString()
 
+	// Check if directory exists
 	info, err := os.Stat(directoryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			tflog.Info(ctx, "Directory does not exist, skipping deletion", map[string]interface{}{
-				"path": directoryPath,
-			})
+			// Directory doesn't exist, no deletion needed
+			tflog.Info(ctx, "Directory does not exist, skipping deletion", map[string]interface{}{"path": directoryPath})
 			resp.State.RemoveResource(ctx)
 			return
 		}
 
-		resp.Diagnostics.AddError(
-			"Error Accessing Directory",
-			fmt.Sprintf("Failed to access directory for deletion: %v", err),
-		)
+		// Unexpected error accessing directory
+		resp.Diagnostics.AddError("Error Accessing Directory", fmt.Sprintf("Failed to access directory for deletion: %v", err))
 		return
 	}
 
+	// Ensure it is a directory
 	if !info.IsDir() {
-		resp.Diagnostics.AddError(
-			"Invalid Directory Path",
-			"The specified path exists but is not a directory, so it cannot be deleted.",
-		)
+		resp.Diagnostics.AddError("Invalid Directory Path", fmt.Sprintf("The path '%s' exists but is not a directory.", directoryPath))
 		return
 	}
 
+	// Check if the path is protected and prevent deletion if true
 	if isProtectedPath(directoryPath) {
-		tflog.Warn(ctx, "Attempted to delete a protected path, skipping deletion", map[string]interface{}{
-			"path": directoryPath,
-		})
+		tflog.Warn(ctx, "Attempted to delete a protected path, skipping deletion", map[string]interface{}{"path": directoryPath})
 		return
 	}
 
+	// Decide the action based on force and managed flags
 	if data.Force.ValueBool() {
-		tflog.Info(ctx, "Force deletion enabled, removing directory", map[string]interface{}{
-			"path": directoryPath,
-		})
+		// Force deletion
+		tflog.Info(ctx, "Force deletion enabled, removing directory", map[string]interface{}{"path": directoryPath})
 		if err := os.RemoveAll(directoryPath); err != nil {
-			resp.Diagnostics.AddError(
-				"Error Deleting Directory",
-				fmt.Sprintf("Failed to delete directory: %v", err),
-			)
+			resp.Diagnostics.AddError("Error Deleting Directory", fmt.Sprintf("Failed to delete directory: %v", err))
+			return
+		}
+	} else if data.Managed.ValueBool() {
+		// Managed directory, proceed with deletion
+		tflog.Info(ctx, "Managed directory, proceeding with deletion", map[string]interface{}{"path": directoryPath})
+		if err := os.RemoveAll(directoryPath); err != nil {
+			resp.Diagnostics.AddError("Error Deleting Directory", fmt.Sprintf("Failed to delete directory: %v", err))
 			return
 		}
 	} else {
-		if data.Managed.ValueBool() {
-			tflog.Info(ctx, "Managed directory, proceeding with deletion", map[string]interface{}{
-				"path": directoryPath,
-			})
-			if err := os.RemoveAll(directoryPath); err != nil {
-				resp.Diagnostics.AddError(
-					"Error Deleting Directory",
-					fmt.Sprintf("Failed to delete directory: %v", err),
-				)
-				return
-			}
-		} else {
-			tflog.Info(ctx, "Directory is unmanaged, skipping deletion", map[string]interface{}{
-				"path": directoryPath,
-			})
-		}
+		// Unmanaged directory, skipping deletion
+		tflog.Info(ctx, "Directory is unmanaged, skipping deletion", map[string]interface{}{"path": directoryPath})
+		return
 	}
 
+	// Successfully removed the directory, update state
 	resp.State.RemoveResource(ctx)
-	tflog.Info(ctx, "Directory successfully deleted", map[string]interface{}{
-		"path": directoryPath,
-	})
+	tflog.Info(ctx, "Directory successfully deleted", map[string]interface{}{"path": directoryPath})
 }
 
 func (r *resourceUtilitiesLocalDirectory) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data LocalDirectory
 
+	// Retrieve plan data
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	// Retrieve the current directory info
 	directoryPath := data.Path.ValueString()
 	info, err := os.Stat(directoryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			resp.State.RemoveResource(ctx)
+			// Log a warning if the path doesn't exist
+			tflog.Warn(ctx, "Directory does not exist; proceeding without error.", map[string]interface{}{
+				"path": directoryPath,
+			})
+			data.User = types.StringNull()
+			data.Group = types.StringNull()
+			data.Permissions = types.StringNull()
+			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+			return
+		} else {
+			// Unexpected error
+			resp.Diagnostics.AddError(
+				"Error Retrieving Directory Info",
+				fmt.Sprintf("Failed to check the path '%s': %v", directoryPath, err),
+			)
 			return
 		}
-
-		resp.Diagnostics.AddError(
-			"Error Reading Directory",
-			err.Error(),
-		)
-		return
 	}
 
-	if !info.IsDir() {
+	// If the path exists, check if it’s a directory
+	if info != nil && !info.IsDir() {
 		resp.Diagnostics.AddError(
 			"Invalid Directory Path",
-			"The path exists but is not a directory.",
+			fmt.Sprintf("The path '%s' exists but is not a directory.", directoryPath),
 		)
 		return
 	}
 
-	var uid, gid int
+	var userName, groupName string
 
 	if runtime.GOOS != "windows" {
-		cmd := exec.Command("ls", "-ld", directoryPath)
-		output, err := cmd.Output()
-		if err != nil {
+		// Retrieve system-specific metadata
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
 			resp.Diagnostics.AddError(
-				"Error Retrieving Directory Metadata",
-				fmt.Sprintf("Failed to retrieve metadata for '%s': %v", directoryPath, err),
+				"Error Retrieving File Metadata",
+				"Failed to retrieve system metadata for the directory.",
 			)
 			return
 		}
 
-		fields := strings.Fields(string(output))
-		if len(fields) < 4 {
-			resp.Diagnostics.AddError(
-				"Error Parsing Directory Metadata",
-				fmt.Sprintf("Unexpected output format from `ls -ld`: %s", output),
-			)
-			return
-		}
+		// Get UID and GID
+		uid := stat.Uid
+		gid := stat.Gid
 
-		userName := fields[2]
-		groupName := fields[3]
-
-		uid, err = getUserID(userName)
+		// Lookup user name
+		userInfo, err := user.LookupId(fmt.Sprint(uid))
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Retrieving User Info",
-				fmt.Sprintf("Failed to get UID for user '%s': %v", userName, err),
+				fmt.Sprintf("Failed to retrieve user information for UID %d: %v", uid, err),
 			)
 			return
 		}
+		userName = userInfo.Username
 
-		gid, err = getGroupID(groupName)
+		// Lookup group name
+		groupInfo, err := user.LookupGroupId(fmt.Sprint(gid))
 		if err != nil {
-			resp.Diagnostics.AddError(
+			resp.Diagnostics.AddWarning(
 				"Error Retrieving Group Info",
-				fmt.Sprintf("Failed to get GID for group '%s': %v", groupName, err),
+				fmt.Sprintf("Failed to retrieve group information for GID %d: %v", gid, err),
 			)
-			return
+			groupName = "" // Reset group name if unresolved
+		} else {
+			groupName = groupInfo.Name
 		}
 	} else {
-		// Default values for Windows
-		uid = -1 // No valid UID on Windows
-		gid = -1 // No valid GID on Windows
+		// Defaults for Windows
+		userName = "unknown"
+		groupName = "unknown"
 	}
 
-	userInfo, err := user.LookupId(fmt.Sprintf("%d", uid))
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Retrieving User Info",
-			fmt.Sprintf("Failed to lookup user by UID %d: %v", uid, err),
-		)
-		return
-	}
-	groupInfo, err := user.LookupGroupId(fmt.Sprintf("%d", gid))
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Retrieving Group Info",
-			fmt.Sprintf("Failed to lookup group by GID %d: %v", gid, err),
-		)
-		return
-	}
-
-	data.User = types.StringValue(userInfo.Username)
-	data.Group = types.StringValue(groupInfo.Name)
-
+	// Retrieve and set directory permissions
 	mode := info.Mode().Perm()
 	data.Permissions = types.StringValue(fmt.Sprintf("%04o", mode))
+	data.User = types.StringValue(userName)
+	data.Group = types.StringValue(groupName)
 
+	// Log read operation
 	tflog.Info(ctx, "Read local directory", map[string]interface{}{
 		"path":        directoryPath,
-		"managed":     data.Managed.ValueBool(),
-		"force":       data.Force.ValueBool(),
-		"user":        userInfo.Username,
-		"group":       groupInfo.Name,
+		"user":        userName,
+		"group":       groupName,
 		"permissions": data.Permissions.ValueString(),
 	})
 
+	// Set the state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *resourceUtilitiesLocalDirectory) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	permissionsRegex := regexp.MustCompile(`^0[0-7]{3}$`)
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: `
 The **utilities_local_directory** resource manages a local directory on the filesystem, ensuring it exists with specified attributes like permissions, ownership, and management status.
@@ -470,59 +489,41 @@ The **utilities_local_directory** resource manages a local directory on the file
 **Note**: This resource is currently **not supported** on Windows systems.
 `,
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the resource, representing the full path to the directory.",
+			"path": schema.StringAttribute{
+				Required:            true,
+				MarkdownDescription: "Path of the directory to manage. The directory must exist or be created based on other attributes.",
+			},
+			"user": schema.StringAttribute{
+				Optional:            true,
 				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+				MarkdownDescription: "User to own the directory. Defaults to the current system user if not specified.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
 				},
 			},
-			"path": schema.StringAttribute{
-				MarkdownDescription: "The absolute path to the directory to be managed.",
-				Required:            true,
+			"group": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Group to own the directory. Defaults to the current user's group if not specified.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
-			"managed": schema.BoolAttribute{
-				MarkdownDescription: `
-Indicates whether the directory is managed by this resource:
-- **true**: The directory was created by this resource.
-- **false**: The directory pre-existed and is considered unmanaged.`,
-				Computed: true,
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
+			"permissions": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Permissions to set on the directory, in octal format (e.g., 0755).",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(permissionsRegex, "must be a valid octal permission (e.g., 0755)"),
 				},
 			},
 			"force": schema.BoolAttribute{
-				MarkdownDescription: `
-Controls the behavior during the destroy phase:
-- **true**: The directory will be forcibly deleted even if it is unmanaged.
-- **false**: Unmanaged directories will not be deleted.`,
-				Computed: true,
-				Default:  booldefault.StaticBool(false),
-				Optional: true,
+				Optional:            true,
+				MarkdownDescription: "Whether to force creation of the directory, even if it already exists. Default is false.",
 			},
-			"user": schema.StringAttribute{
-				MarkdownDescription: `
-Specifies the user owner of the directory. Defaults to "root".
-- **Format**: Provide the username (e.g., "user1").`,
-				Computed: true,
-				Default:  stringdefault.StaticString("root"),
-				Optional: true,
-			},
-			"group": schema.StringAttribute{
-				MarkdownDescription: `
-Specifies the group owner of the directory. Defaults to "root".
-- **Format**: Provide the group name (e.g., "group1").`,
-				Computed: true,
-				Default:  stringdefault.StaticString("root"),
-				Optional: true,
-			},
-			"permissions": schema.StringAttribute{
-				MarkdownDescription: `
-Defines the permissions for the directory in octal format (e.g., "0755"). Defaults to "0755".
-- **Usage**: This can be used to ensure specific read, write, and execute permissions for the directory.`,
-				Computed: true,
-				Default:  stringdefault.StaticString("0755"),
-				Optional: true,
+			"managed": schema.BoolAttribute{
+				Computed:            true,
+				MarkdownDescription: "Indicates whether the directory is managed by this provider. Defaults to false for existing directories.",
 			},
 		},
 	}
@@ -531,66 +532,37 @@ Defines the permissions for the directory in octal format (e.g., "0755"). Defaul
 func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data LocalDirectory
 
+	// Retrieve plan data
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	// Check if it's a valid directory
 	directoryPath := data.Path.ValueString()
 	info, err := os.Stat(directoryPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			if err := os.MkdirAll(directoryPath, os.ModePerm); err != nil {
-				resp.Diagnostics.AddError(
-					"Error Creating Directory",
-					err.Error(),
-				)
-				return
-			}
-			data.Managed = types.BoolValue(true)
-		} else {
+	if err == nil {
+		// Path exists, check if it's a directory
+		if info != nil && !info.IsDir() {
 			resp.Diagnostics.AddError(
-				"Error Accessing Directory",
-				err.Error(),
+				"Invalid Directory Path",
+				fmt.Sprintf("The path '%s' exists but is not a directory.", directoryPath),
 			)
 			return
 		}
-	}
-
-	if !info.IsDir() {
+	} else if !os.IsNotExist(err) {
+		// Unexpected error while checking the path
 		resp.Diagnostics.AddError(
-			"Invalid Directory Path",
-			"The path exists but is not a directory.",
+			"Error Retrieving Path Info",
+			fmt.Sprintf("Failed to check the path '%s': %v", directoryPath, err),
 		)
 		return
 	}
 
-	if data.Permissions.ValueString() != "" {
-		var perm int
-		_, err := fmt.Sscanf(data.Permissions.ValueString(), "%o", &perm)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Permissions",
-				fmt.Sprintf("Failed to parse permissions: %v", err),
-			)
-			return
-		}
-
-		if err := os.Chmod(directoryPath, os.FileMode(perm)); err != nil {
-			resp.Diagnostics.AddError(
-				"Error Setting Permissions",
-				fmt.Sprintf("Failed to set directory permissions: %v", err),
-			)
-			return
-		}
-	}
-
+	// Compute default user if not set
 	userName := data.User.ValueString()
-	groupName := data.Group.ValueString()
-	var uid, gid int
-
-	if data.User.IsNull() || userName == "" {
-		currentUser, err := user.Current()
+	if userName == "" {
+		currentUserInfo, err := user.Current()
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Retrieving Current User",
@@ -598,8 +570,28 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 			)
 			return
 		}
-		userName = currentUser.Username
+		userName = currentUserInfo.Username
+		data.User = types.StringValue(userName)
 	}
+
+	// Compute default group if not set
+	groupName := data.Group.ValueString()
+	if groupName == "" {
+		var err error
+
+		groupName, err = getCurrentGroupName()
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Retrieving Current Group Name",
+				err.Error(),
+			)
+			return
+		}
+
+		data.Group = types.StringValue(groupName)
+	}
+
+	// Convert user name to UID
 	userInfo, err := user.Lookup(userName)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -608,7 +600,9 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 		)
 		return
 	}
-	uid, err = strconv.Atoi(userInfo.Uid)
+
+	// Convert UID to integer
+	uid, err := strconv.Atoi(userInfo.Uid)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid User ID",
@@ -617,53 +611,99 @@ func (r *resourceUtilitiesLocalDirectory) Update(ctx context.Context, req resour
 		return
 	}
 
-	if data.Group.IsNull() || groupName == "" {
-		currentUser, err := user.Current()
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error Retrieving Current User",
-				fmt.Sprintf("Failed to retrieve the current user: %v", err),
-			)
-			return
-		}
-		groupInfo, err := user.LookupGroupId(currentUser.Gid)
-		if err == nil {
-			groupName = groupInfo.Name
-		} else {
-			groupName = currentUser.Gid
-		}
-	}
-
+	// Convert group name to GID
 	groupInfo, err := user.LookupGroup(groupName)
 	if err != nil {
 		resp.Diagnostics.AddError(
-			"Invalid Group",
+			"Error Looking Up Group",
 			fmt.Sprintf("Failed to lookup group '%s': %v", groupName, err),
 		)
 		return
 	}
-	gid, err = strconv.Atoi(groupInfo.Gid)
+
+	// Convert GID to integer
+	gid, err := strconv.Atoi(groupInfo.Gid)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid Group ID",
-			fmt.Sprintf("Failed to convert group ID '%s' to integer: %v", groupInfo.Gid, err),
+			fmt.Sprintf("Failed to convert GID '%s' to integer: %v", groupInfo.Gid, err),
 		)
 		return
 	}
 
-	if runtime.GOOS != "windows" {
-		// For Windows, fallback to default values
+	// For Windows, fallback to default values
+	if runtime.GOOS == "windows" {
 		uid = -1 // No valid UID on Windows
 		gid = -1 // No valid GID on Windows
 	}
 
-	if err := os.Chown(directoryPath, uid, gid); err != nil {
+	// Check if the directory exists otherwise create
+	if _, err := os.Stat(directoryPath); os.IsNotExist(err) {
+		// Create the directory since it doesn't exist
+		if err := os.MkdirAll(directoryPath, os.ModePerm); err != nil {
+			resp.Diagnostics.AddError(
+				"Error Creating Directory",
+				fmt.Sprintf("Failed to create directory '%s': %v", directoryPath, err),
+			)
+			return
+		}
+		data.Managed = types.BoolValue(true)
+	} else if err != nil {
+		// Handle unexpected errors
 		resp.Diagnostics.AddError(
-			"Error Setting Ownership",
-			fmt.Sprintf("Failed to set directory ownership for '%s': %v", directoryPath, err),
+			"Error Checking Directory",
+			fmt.Sprintf("Failed to check directory '%s': %v", directoryPath, err),
 		)
 		return
 	}
 
+	// Handle file permission and ownership
+	if isProtectedPath(directoryPath) {
+		tflog.Warn(ctx, "Skipping ownership modification for protected OS path", map[string]interface{}{
+			"path":   directoryPath,
+			"reason": "The specified path is considered critical to the operating system and should not have its ownership modified to avoid potential system instability or security risks.",
+		})
+	} else {
+		// Apply ownership to the directory
+		if err := os.Chown(directoryPath, uid, gid); err != nil {
+			resp.Diagnostics.AddError(
+				"Error Setting Ownership",
+				fmt.Sprintf("Failed to set ownership for path '%s': %s", directoryPath, err.Error()),
+			)
+			return
+		}
+
+		// Apply permissions if provided
+		if perms := data.Permissions.ValueString(); perms != "" {
+			mode, err := strconv.ParseUint(perms, 8, 32)
+			if err != nil {
+				resp.Diagnostics.AddError("Invalid Permissions", fmt.Sprintf("Failed to convert permissions '%s': %v", perms, err))
+				return
+			}
+			if err := os.Chmod(directoryPath, os.FileMode(mode)); err != nil {
+				resp.Diagnostics.AddError("Error Setting Permissions", err.Error())
+				return
+			}
+			data.Managed = types.BoolValue(true)
+		}
+	}
+
+	// Retrieve the current directory info
+	info, err = os.Stat(directoryPath)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Retrieving Directory Info",
+			err.Error(),
+		)
+		return
+	}
+
+	// Get the current permissions (mode) of the directory
+	currentPermissions := info.Mode().Perm()
+
+	// Set data.Permissions to the current permissions
+	data.Permissions = types.StringValue(fmt.Sprintf("0%o", currentPermissions))
+
+	// Set the state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

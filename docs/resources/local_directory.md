@@ -23,10 +23,8 @@ The **utilities_local_directory** resource manages a local directory on the file
 ```terraform
 resource "utilities_local_directory" "example" {
   force = true
-  group = "root"
   path  = "/tmp/test"
-  permissions = "0755"
-  user = "root"
+  permissions = "0750"
 }
 ```
 
@@ -35,23 +33,15 @@ resource "utilities_local_directory" "example" {
 
 ### Required
 
-- `path` (String) The absolute path to the directory to be managed.
+- `path` (String) Path of the directory to manage. The directory must exist or be created based on other attributes.
 
 ### Optional
 
-- `force` (Boolean) Controls the behavior during the destroy phase:
-- **true**: The directory will be forcibly deleted even if it is unmanaged.
-- **false**: Unmanaged directories will not be deleted.
-- `group` (String) Specifies the group owner of the directory. Defaults to "root".
-- **Format**: Provide the group name (e.g., "group1").
-- `permissions` (String) Defines the permissions for the directory in octal format (e.g., "0755"). Defaults to "0755".
-- **Usage**: This can be used to ensure specific read, write, and execute permissions for the directory.
-- `user` (String) Specifies the user owner of the directory. Defaults to "root".
-- **Format**: Provide the username (e.g., "user1").
+- `force` (Boolean) Whether to force creation of the directory, even if it already exists. Default is false.
+- `group` (String) Group to own the directory. Defaults to the current user's group if not specified.
+- `permissions` (String) Permissions to set on the directory, in octal format (e.g., 0755).
+- `user` (String) User to own the directory. Defaults to the current system user if not specified.
 
 ### Read-Only
 
-- `id` (String) The ID of the resource, representing the full path to the directory.
-- `managed` (Boolean) Indicates whether the directory is managed by this resource:
-- **true**: The directory was created by this resource.
-- **false**: The directory pre-existed and is considered unmanaged.
+- `managed` (Boolean) Indicates whether the directory is managed by this provider. Defaults to false for existing directories.

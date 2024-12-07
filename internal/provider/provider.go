@@ -66,5 +66,7 @@ func (p *utilitiesProvider) Functions(ctx context.Context) []func() function.Fun
 	return []func() function.Function{
 		NewFunctionHttpRequest,
 		NewFunctionPathExists,
+		NewFunctionPathOwner,
+		NewFunctionPathPermission,
 	}
 }
