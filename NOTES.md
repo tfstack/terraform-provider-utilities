@@ -30,7 +30,7 @@ go install .
 
 cd examples/provider-install-verification/
 terraform plan
-terraform -chdir=./examples/function/http_request plan
+terraform -chdir=./examples/resources/utilities_extract_zip plan
 go test -v ./internal/provider/...
 go test -v ./internal/provider/provider_test.go
 
