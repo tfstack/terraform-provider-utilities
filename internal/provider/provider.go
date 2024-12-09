@@ -50,6 +50,8 @@ func (p *utilitiesProvider) Configure(ctx context.Context, req provider.Configur
 // Resources returns an empty list since no resources are implemented.
 func (p *utilitiesProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		// NewResourceUtilitiesExtractTar,
+		NewResourceUtilitiesExtractTarGz,
 		NewResourceUtilitiesExtractZip,
 		NewResourceUtilitiesLocalDirectory,
 	}

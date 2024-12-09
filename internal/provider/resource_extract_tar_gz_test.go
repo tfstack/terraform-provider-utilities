@@ -12,13 +12,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 )
 
-func TestResourceUtilitiesExtractZip(t *testing.T) {
+func TestResourceUtilitiesExtractTarGz(t *testing.T) {
 	// Define file paths as variables
 	zipDownloadDir := fmt.Sprintf("/tmp/download-dir-%s", uuid.NewString())
 	extractedDir := fmt.Sprintf("/tmp/extracted-dir-%s", uuid.NewString())
 	backupDir := fmt.Sprintf("/tmp/backup-dir-%s", uuid.NewString())
-	zipFilePath := zipDownloadDir + "/jq_1.7.zip" // Full path to the ZIP file
-	zipURL := "https://github.com/platformfuzz/rpm-builder/archive/refs/tags/jq_1.7.zip"
+	tagGzFilePath := zipDownloadDir + "/jq_1.7.tar.gz" // Full path to the TarGz file
+	tarGzURL := "https://github.com/platformfuzz/rpm-builder/archive/refs/tags/jq_1.7.tar.gz"
 
 	// Ensure cleanup even on test failure
 	defer func() {
@@ -27,11 +27,11 @@ func TestResourceUtilitiesExtractZip(t *testing.T) {
 		os.RemoveAll(backupDir)
 	}()
 
-	// Download the zip file before starting the test
-	t.Log("Downloading ZIP file for extraction...")
-	err := downloadFile(zipURL, zipFilePath)
+	// Download the TarGz file before starting the test
+	t.Log("Downloading TarGz file for extraction...")
+	err := downloadFile(tarGzURL, tagGzFilePath)
 	if err != nil {
-		t.Fatalf("Failed to download ZIP file: %v", err)
+		t.Fatalf("Failed to download TarGz file: %v", err)
 	}
 
 	resource.UnitTest(t, resource.TestCase{
@@ -52,26 +52,26 @@ func TestResourceUtilitiesExtractZip(t *testing.T) {
 
 					provider "utilities" {}
 
-					resource "utilities_extract_zip" "example1" {
+					resource "utilities_extract_tar_gz" "example1" {
 						destination = "%s"
 						url         = "%s"
 					}
-					`, extractedDir, zipURL),
+					`, extractedDir, tarGzURL),
 				Check: resource.TestCheckFunc(func(s *terraform.State) error {
-					rs, ok := s.RootModule().Resources["utilities_extract_zip.example1"]
+					rs, ok := s.RootModule().Resources["utilities_extract_tar_gz.example1"]
 					if !ok {
-						return fmt.Errorf("resource not found: utilities_extract_zip.example1")
+						return fmt.Errorf("resource not found: utilities_extract_tar_gz.example1")
 					}
 
 					if rs.Primary.Attributes["destination"] != extractedDir {
 						return fmt.Errorf("expected destination to be '%s', got '%s'", extractedDir, rs.Primary.Attributes["destination"])
 					}
 
-					if rs.Primary.Attributes["url"] != zipURL {
-						return fmt.Errorf("expected url to be '%s', got '%s'", zipURL, rs.Primary.Attributes["url"])
+					if rs.Primary.Attributes["url"] != tarGzURL {
+						return fmt.Errorf("expected url to be '%s', got '%s'", tarGzURL, rs.Primary.Attributes["url"])
 					}
 
-					urlRegex := regexp.MustCompile(`^https?://.+\.zip$`)
+					urlRegex := regexp.MustCompile(`^https?://.+\.tar.gz$`)
 					if !urlRegex.MatchString(rs.Primary.Attributes["url"]) {
 						return fmt.Errorf("url '%s' does not match the expected pattern", rs.Primary.Attributes["url"])
 					}
@@ -95,15 +95,15 @@ func TestResourceUtilitiesExtractZip(t *testing.T) {
 
 					provider "utilities" {}
 
-					resource "utilities_extract_zip" "example2" {
+					resource "utilities_extract_tar_gz" "example2" {
 						destination = "%s"
 						source      = "%s"
 					}
-					`, backupDir, zipFilePath),
+					`, backupDir, tagGzFilePath),
 				Check: resource.TestCheckFunc(func(s *terraform.State) error {
-					rs, ok := s.RootModule().Resources["utilities_extract_zip.example2"]
+					rs, ok := s.RootModule().Resources["utilities_extract_tar_gz.example2"]
 					if !ok {
-						return fmt.Errorf("resource not found: utilities_extract_zip.example2")
+						return fmt.Errorf("resource not found: utilities_extract_tar_gz.example2")
 					}
 
 					if rs.Primary.Attributes["destination"] != backupDir {
@@ -114,8 +114,8 @@ func TestResourceUtilitiesExtractZip(t *testing.T) {
 						return fmt.Errorf("expected url to be empty, but found '%s'", rs.Primary.Attributes["url"])
 					}
 
-					if rs.Primary.Attributes["source"] != zipFilePath {
-						return fmt.Errorf("expected source to be '%s', got '%s'", zipFilePath, rs.Primary.Attributes["source"])
+					if rs.Primary.Attributes["source"] != tagGzFilePath {
+						return fmt.Errorf("expected source to be '%s', got '%s'", tagGzFilePath, rs.Primary.Attributes["source"])
 					}
 
 					return nil
