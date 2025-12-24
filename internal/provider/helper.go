@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -22,14 +25,14 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to create file")
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	// Get the data
 	resp, err := http.Get(url)
 	if err != nil {
 		return errors.Wrap(err, "failed to get URL")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Write the body to file
 	_, err = io.Copy(out, resp.Body)

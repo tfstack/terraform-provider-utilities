@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -22,9 +25,9 @@ func TestResourceUtilitiesExtractZip(t *testing.T) {
 
 	// Ensure cleanup even on test failure
 	defer func() {
-		os.RemoveAll(zipDownloadDir)
-		os.RemoveAll(extractedDir)
-		os.RemoveAll(backupDir)
+		_ = os.RemoveAll(zipDownloadDir)
+		_ = os.RemoveAll(extractedDir)
+		_ = os.RemoveAll(backupDir)
 	}()
 
 	// Download the zip file before starting the test

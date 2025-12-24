@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -114,7 +117,7 @@ func (f *HttpRequestFunction) Run(ctx context.Context, req function.RunRequest, 
 		})
 		httpResp = &http.Response{StatusCode: http.StatusInternalServerError}
 	} else {
-		defer httpResp.Body.Close()
+		defer func() { _ = httpResp.Body.Close() }()
 	}
 
 	bodyBytes := []byte(`{"error": "failed to retrieve response body"}`)

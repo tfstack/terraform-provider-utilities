@@ -1,37 +1,68 @@
-# Note: You can use any Debian/Ubuntu based image you want. 
-FROM docker.io/golang:1.22.7-bullseye
+# Terraform Provider Utilities Development Container
+FROM docker.io/golang:1.24-bullseye
 
 # [Option] Install zsh
 ARG INSTALL_ZSH="true"
 # [Option] Upgrade OS packages to their latest versions
-ARG UPGRADE_PACKAGES="false"
-# [Option] Enable non-root Docker access in container
-ARG ENABLE_NONROOT_DOCKER="true"
-# [Option] Use the OSS Moby Engine instead of the licensed Docker Engine
-ARG USE_MOBY="true"
-# [Option] Engine/CLI Version
-ARG DOCKER_VERSION="latest"
+ARG UPGRADE_PACKAGES="true"
 
-# Enable new "BUILDKIT" mode for Docker CLI
-ENV DOCKER_BUILDKIT=1
-
-# Install needed packages and setup non-root user. Use a separate RUN statement to add your
-# own dependencies. A user of "automatic" attempts to reuse an user ID if one already exists.
-ARG USERNAME=automatic
+# Install needed packages and setup non-root user
+ARG USERNAME=vscode
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
+
 COPY scripts/*.sh /tmp/scripts/
-RUN apt-get update -y \
+COPY bashrc /tmp/bashrc
+RUN apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99no-check-valid-until \
+    && (apt-get update -y --allow-releaseinfo-change 2>&1 || true) \
+    && apt-get install -y --allow-unauthenticated ca-certificates gnupg lsb-release || true \
+    && apt-get update -y --allow-releaseinfo-change \
     && /bin/bash /tmp/scripts/common-debian.sh "${INSTALL_ZSH}" "${USERNAME}" "${USER_UID}" "${USER_GID}" "${UPGRADE_PACKAGES}" "true" "true" \
-    # Use Docker script from script library to set things up
-    && /bin/bash /tmp/scripts/docker-in-docker-debian.sh "${ENABLE_NONROOT_DOCKER}" "${USERNAME}" "${USE_MOBY}" "${DOCKER_VERSION}" \
+    # Install additional development tools
+    && apt-get install -y \
+        git \
+        curl \
+        wget \
+        make \
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        software-properties-common \
+        apt-transport-https \
+        bash-completion \
+    # Install golangci-lint (latest)
+    && curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin \
+    # Install goimports (latest - GOTOOLCHAIN=auto will download compatible Go toolchain if needed)
+    && GOTOOLCHAIN=auto go install golang.org/x/tools/cmd/goimports@latest \
+    # Install gopls (latest - GOTOOLCHAIN=auto will download compatible Go toolchain if needed)
+    && GOTOOLCHAIN=auto go install golang.org/x/tools/gopls@latest \
+    # Configure bash history and completion for root
+    && cat /tmp/bashrc >> /root/.bashrc \
+    # Configure bash history and completion for vscode user if it exists
+    && if [ -d /home/${USERNAME} ]; then cat /tmp/bashrc >> /home/${USERNAME}/.bashrc; fi \
+    # Also add .env loading to system-wide bashrc for VS Code terminals
+    && echo "" >> /etc/bash.bashrc \
+    && echo "# Auto-load .env file if it exists (for Utilities token and Terraform variables)" >> /etc/bash.bashrc \
+    && echo "if [ -f /workspaces/terraform-provider-utilities/.env ]; then" >> /etc/bash.bashrc \
+    && echo "    set -a" >> /etc/bash.bashrc \
+    && echo "    source /workspaces/terraform-provider-utilities/.env" >> /etc/bash.bashrc \
+    && echo "    set +a" >> /etc/bash.bashrc \
+    && echo "elif [ -f /workspace/.env ]; then" >> /etc/bash.bashrc \
+    && echo "    set -a" >> /etc/bash.bashrc \
+    && echo "    source /workspace/.env" >> /etc/bash.bashrc \
+    && echo "    set +a" >> /etc/bash.bashrc \
+    && echo "fi" >> /etc/bash.bashrc \
     # Clean up
-    && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/scripts/
+    && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/scripts/ /tmp/bashrc
 
-VOLUME [ "/var/lib/docker" ]
+# Set up Go environment
+ENV GOPATH=/go
+ENV PATH=$GOPATH/bin:$PATH
 
-# Setting the ENTRYPOINT to docker-init.sh will start up the Docker Engine 
-# inside the container "overrideCommand": false is set in devcontainer.json. 
-# The script will also execute CMD if you need to alter startup behaviors.
-ENTRYPOINT [ "/usr/local/share/docker-init.sh" ]
-CMD [ "sleep", "infinity" ]
+# Keep as root user to avoid permission issues
+# USER ${USERNAME}
+
+# Set working directory
+WORKDIR /workspace

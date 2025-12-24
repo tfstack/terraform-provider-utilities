@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -373,7 +376,7 @@ func extractTarGzFile(ctx context.Context, source, destination string, diagnosti
 		)
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Wrap the file in a Gzip reader
 	gzipReader, err := gzip.NewReader(file)
@@ -384,7 +387,7 @@ func extractTarGzFile(ctx context.Context, source, destination string, diagnosti
 		)
 		return err
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 
 	// Create a new tar reader from the Gzip reader
 	tarReader := tar.NewReader(gzipReader)
@@ -482,7 +485,7 @@ func extractTarGzEntry(ctx context.Context, header *tar.Header, tarReader *tar.R
 		)
 		return err
 	}
-	defer destFile.Close()
+	defer func() { _ = destFile.Close() }()
 
 	// Copy the contents
 	if _, err := io.Copy(destFile, tarReader); err != nil {
@@ -539,7 +542,7 @@ func (r *resourceUtilitiesExtractTarGz) validateAndExtractTarGzFromURL(ctx conte
 		)
 		return nil, false, err
 	}
-	defer os.Remove(tmpFile) // Ensure the temporary file is removed after extraction
+	defer func() { _ = os.Remove(tmpFile) }() // Ensure the temporary file is removed after extraction
 
 	// Check if the destination directory exists
 	if _, err := os.Stat(destination); os.IsNotExist(err) {
@@ -603,7 +606,7 @@ func downloadTarGzFile(ctx context.Context, url string, diagnostics *diag.Diagno
 		diagnostics.AddError("HTTP Request Failed", fmt.Sprintf("Error making HTTP request to '%s': %v", url, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check if the response status is OK
 	if resp.StatusCode != http.StatusOK {
