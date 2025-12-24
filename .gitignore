@@ -1,35 +1,55 @@
-*.dll
+# Binaries for programs and plugins
 *.exe
-.DS_Store
-example.tf
-terraform.tfplan
-terraform.tfstate
-bin/
-dist/
-modules-dev/
-/pkg/
-website/.vagrant
-website/.bundle
-website/build
-website/node_modules
-.vagrant/
-*.backup
-./*.tfstate
-.terraform/
-*.log
-*.bak
-*~
-.*.swp
-.idea
-*.iml
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
 *.test
-*.iml
 
-website/vendor
+# Output of the go coverage tool
+*.out
+coverage.html
 
-# Test exclusions
-!command/test-fixtures/**/*.tfstate
-!command/test-fixtures/**/.terraform/
+# Dependency directories
+vendor/
 
-# Keep windows files with windows line endings
-*.winfile eol=crlf
+# Go workspace file
+go.work
+
+# Terraform files
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Example state files
+examples/**/*.tfstate
+examples/**/*.tfstate.*
+examples/**/.terraform/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Provider binary
+terraform-provider-discord
+terraform-provider-discord.exe
+
+# Environment variables
+.env

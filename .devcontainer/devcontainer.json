@@ -1,22 +1,36 @@
 {
-  "name": "Docker in Docker Development Container Template",
+  "name": "Terraform Provider Utilities Development",
   "dockerFile": "Dockerfile",
-	"runArgs": ["--init", "--privileged"],
-	"mounts": ["source=dind-var-lib-docker,target=/var/lib/docker,type=volume"],
-	"overrideCommand": false,
+  "runArgs": ["--init"],
 
   "customizations": {
     "vscode": {
       "extensions": [
-        "esbenp.prettier-vscode",
+        "davidanson.vscode-markdownlint",
         "golang.go",
-        "Gruntfuggly.todo-tree",
         "hashicorp.terraform",
+        "Gruntfuggly.todo-tree",
         "ms-azuretools.vscode-docker",
-        "vscode-icons-team.vscode-icons"
+        "vscode-icons-team.vscode-icons",
+        "ms-vscode.makefile-tools"
       ],
       "settings": {
-        "workbench.iconTheme": "vscode-icons"
+        "workbench.iconTheme": "vscode-icons",
+        "go.useLanguageServer": true,
+        "go.formatTool": "goimports",
+        "go.lintTool": "golangci-lint",
+        "go.lintOnSave": "package",
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        "[terraform]": {
+          "editor.formatOnSave": true
+        },
+        "terraform.format.enable": true,
+        "terraform.languageServer.enable": true
       }
     }
   },
@@ -27,6 +41,6 @@
   // Use 'postCreateCommand' to run commands after the container is created.
   "postCreateCommand": ".devcontainer/scripts/postCreate.sh"
 
-	// Comment out to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
-	// "remoteUser": "vscode"
+  // Connect as root to avoid permission issues (commented out remoteUser means root)
+  // "remoteUser": "vscode"
 }

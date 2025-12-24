@@ -1,22 +1,94 @@
-# Include commands that you would like to execute after the container is created
+#!/bin/bash
+set -e
+
+echo "🚀 Setting up Terraform Provider Utilities development environment..."
+
+# Display system information
+echo "📋 System Information:"
 uname -a
+echo "Go version: $(go version)"
+echo "Go path: $(go env GOPATH)"
 
-apt-get update -y
+# Install Terraform
+echo "📦 Installing Terraform..."
 export DEBIAN_FRONTEND=noninteractive
-
-# terraform
+apt-get update -y
 apt-get install -y apt-utils gnupg software-properties-common
-curl -s https://apt.releases.hashicorp.com/gpg | gpg --dearmor > hashicorp.gpg
-install -o root -g root -m 644 hashicorp.gpg /etc/apt/trusted.gpg.d/
-apt-add-repository -y "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+
+curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
 apt-get update -y
 apt-get install -y terraform
-rm hashicorp.gpg
 
-# install golangci-lint
-curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.62.0
+echo "✅ Terraform installed: $(terraform version)"
 
-# install tfplugindocs
-export GOBIN=$PWD/bin
-export PATH=$GOBIN:$PATH
-go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs
+# Install Terraform Plugin Framework docs generator
+echo "📚 Installing Terraform Plugin Framework documentation generator..."
+go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
+
+# Verify Go tools
+echo "🔧 Verifying Go tools..."
+echo "golangci-lint: $(golangci-lint version)"
+echo "goimports: $(which goimports)"
+echo "gopls: $(which gopls)"
+
+# Download Go dependencies
+echo "📥 Downloading Go dependencies..."
+cd /workspaces/terraform-provider-utilities || cd /workspace
+go mod download
+go mod verify
+
+# Build the provider to verify everything works
+echo "🔨 Building provider..."
+go build -buildvcs=false -o terraform-provider-utilities
+
+# Install provider locally for Terraform to use
+echo "📦 Installing provider locally for Terraform..."
+VERSION="0.1.0"
+PLATFORM="linux_amd64"
+PLUGIN_DIR="${HOME}/.terraform.d/plugins/registry.terraform.io/tfstack/utilities/${VERSION}/${PLATFORM}"
+mkdir -p "${PLUGIN_DIR}"
+cp terraform-provider-utilities "${PLUGIN_DIR}/"
+echo "✅ Provider installed to ${PLUGIN_DIR}"
+
+# Initialize Terraform in examples (non-blocking, may fail if variables needed)
+echo "🔧 Initializing Terraform examples..."
+for dir in examples/data-sources/*/ examples/resources/*/ examples/provider/; do
+	if [ -f "${dir}data-source.tf" ] || [ -f "${dir}resource.tf" ] || [ -f "${dir}provider.tf" ] || [ -f "${dir}main.tf" ] || [ -f "${dir}"*.tf ]; then
+		echo "  Initializing ${dir}..."
+		cd "${dir}" && terraform init -upgrade > /dev/null 2>&1 && echo "    ✅ ${dir} initialized" || echo "    ⚠️  ${dir} skipped (may need variables)"
+		cd - > /dev/null
+	fi
+	done
+
+# Load .env file if it exists
+echo "🔐 Loading environment variables from .env file..."
+if [ -f /workspaces/terraform-provider-utilities/.env ]; then
+    set -a
+    source /workspaces/terraform-provider-utilities/.env
+    set +a
+    echo "✅ Environment variables loaded from .env"
+elif [ -f /workspace/.env ]; then
+    set -a
+    source /workspace/.env
+    set +a
+    echo "✅ Environment variables loaded from .env"
+else
+    echo "⚠️  No .env file found. Create one from .env.example if needed."
+fi
+
+echo ""
+echo "✅ Development environment setup complete!"
+echo ""
+echo "Available commands:"
+echo "  make build          - Build the provider"
+echo "  make install        - Install the provider"
+echo "  make install-local   - Install provider locally for Terraform testing"
+echo "  make init-examples  - Initialize Terraform in all examples"
+echo "  make init-example   - Initialize a specific example (EXAMPLE=path)"
+echo "  make test           - Run tests"
+echo "  make fmt            - Format code"
+echo "  make docs           - Generate documentation"
+echo ""
+echo "💡 The provider is already installed locally and examples are initialized!"
+echo "   Navigate to any example directory and run 'terraform plan' or 'terraform apply'."
