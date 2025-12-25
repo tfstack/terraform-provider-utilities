@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -18,7 +21,7 @@ func TestFunctionPathPermission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary file: %v", err)
 	}
-	defer os.Remove(tempFile.Name()) // Ensure the file is cleaned up after the test
+	defer func() { _ = os.Remove(tempFile.Name()) }() // Ensure the file is cleaned up after the test
 
 	// Explicitly set the file permissions to 0644
 	if err := os.Chmod(tempFile.Name(), 0644); err != nil {

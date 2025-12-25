@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -18,7 +21,7 @@ func TestFunctionPathExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temporary file: %v", err)
 	}
-	defer os.Remove(tempFile.Name()) // Ensure the file is cleaned up after the test
+	defer func() { _ = os.Remove(tempFile.Name()) }() // Ensure the file is cleaned up after the test
 
 	tempDirNested := filepath.Join(tempDir, "testdir")
 	if err := os.Mkdir(tempDirNested, 0755); err != nil {

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -60,6 +63,7 @@ func (p *utilitiesProvider) Resources(ctx context.Context) []func() resource.Res
 // DataSources lists the available data sources.
 func (p *utilitiesProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		NewDataSourceBcryptHash,
 		NewDataSourceLocalDirectory,
 	}
 }

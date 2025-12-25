@@ -70,7 +70,7 @@ fmt:
 # Generate documentation
 docs:
 	@echo "==> Generating documentation..."
-	go generate ./...
+	@cd tools && GOFLAGS=-buildvcs=false go generate ./...
 
 # Initialize Terraform in all examples (skip init when using dev_overrides)
 init-examples: setup-terraformrc

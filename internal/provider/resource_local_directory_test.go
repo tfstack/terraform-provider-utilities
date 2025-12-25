@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -17,8 +20,8 @@ func TestResourceUtilitiesLocalDirectory(t *testing.T) {
 
 	// Ensure cleanup even on test failure
 	defer func() {
-		os.RemoveAll(dirPath1)
-		os.RemoveAll(dirPath2)
+		_ = os.RemoveAll(dirPath1)
+		_ = os.RemoveAll(dirPath2)
 	}()
 
 	resource.UnitTest(t, resource.TestCase{

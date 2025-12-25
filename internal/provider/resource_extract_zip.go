@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -373,7 +376,7 @@ func extractZipFile(ctx context.Context, source, destination string, diagnostics
 		)
 		return err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	// Iterate over files in the ZIP
 	for _, file := range r.File {
@@ -455,7 +458,7 @@ func extractZipEntry(ctx context.Context, file *zip.File, destination string, di
 		)
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	// Create the destination file
 	destFile, err := os.Create(destPath)
@@ -466,7 +469,7 @@ func extractZipEntry(ctx context.Context, file *zip.File, destination string, di
 		)
 		return err
 	}
-	defer destFile.Close()
+	defer func() { _ = destFile.Close() }()
 
 	// Copy the contents
 	_, err = io.Copy(destFile, srcFile)
@@ -492,7 +495,7 @@ func calculateFileHash(filepath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unable to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
@@ -524,7 +527,7 @@ func (r *resourceUtilitiesExtractZip) validateAndExtractZipFromURL(ctx context.C
 		)
 		return nil, false, err
 	}
-	defer os.Remove(tmpFile) // Ensure the temporary file is removed after extraction
+	defer func() { _ = os.Remove(tmpFile) }() // Ensure the temporary file is removed after extraction
 
 	// Check if the destination directory exists
 	if _, err := os.Stat(destination); os.IsNotExist(err) {
@@ -588,7 +591,7 @@ func downloadZipFile(ctx context.Context, url string, diagnostics *diag.Diagnost
 		diagnostics.AddError("HTTP Request Failed", fmt.Sprintf("Error making HTTP request to '%s': %v", url, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check if the response status is OK
 	if resp.StatusCode != http.StatusOK {
